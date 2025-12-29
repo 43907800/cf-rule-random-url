@@ -2,17 +2,21 @@ import os
 import shutil
 from pathlib import Path
 from itertools import cycle
+from PIL import Image
 
 # 配置
 SOURCE_DIR = Path("oriImg")
 OUTPUT_DIR = Path("dist")
+
+MAX_SIZE = 1 * 1024 * 1024  # 1MB
+MIN_QUALITY = 40           # 最低质量保护
 
 # ---------------------------------------------------------
 # 核心配置：HASH 长度
 # 2 => 16^2 = 256 个文件
 # 3 => 16^3 = 4096 个文件 (对应 Cloudflare 规则 substring(..., 0, 3))
 # ---------------------------------------------------------
-HASH_LENGTH = 3
+HASH_LENGTH = 2
 NUM_FILES = 16 ** HASH_LENGTH
 
 # 输出文件后缀 (如果你的规则是 .json，这里依然建议生成 .jpg，
@@ -20,6 +24,39 @@ NUM_FILES = 16 ** HASH_LENGTH
 # 这里默认生成 .jpg，请确保 CF 规则也是 .jpg)
 OUTPUT_EXT = ".jpg" 
 
+
+def compress_if_needed(img_path: Path):
+    if img_path.stat().st_size <= MAX_SIZE:
+        return
+
+    try:
+        with Image.open(img_path) as img:
+            img_format = img.format
+
+            # PNG 单独处理
+            if img_format == "PNG":
+                img.save(
+                    img_path,
+                    optimize=True
+                )
+                return
+
+            # JPEG / WEBP
+            quality = 85
+            while quality >= MIN_QUALITY:
+                img.save(
+                    img_path,
+                    format=img_format,
+                    quality=quality,
+                    optimize=True
+                )
+                if img_path.stat().st_size <= MAX_SIZE:
+                    break
+                quality -= 5
+
+    except Exception as e:
+        print(f"    ⚠ 压缩失败: {img_path.name}, {e}")
+        
 def ensure_dir(path: Path):
     if not path.exists():
         path.mkdir(parents=True)
@@ -53,6 +90,7 @@ def process_category(category_name: str, source_files: list):
         dest_path = category_output_dir / file_name
         
         shutil.copy(src_img, dest_path)
+        compress_if_needed(dest_path)
         count += 1
         
     print(f"  [{category_name}] Done. {count} files generated.")
